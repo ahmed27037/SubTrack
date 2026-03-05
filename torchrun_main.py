@@ -154,7 +154,11 @@ def main(args):
 
     logger.info(f"Global rank {global_rank}, local rank {local_rank}, device: {torch.cuda.current_device()}")
 
-    dist.init_process_group(backend="nccl", rank=global_rank, world_size=world_size)
+    backend = "nccl" if (dist.is_nccl_available() and torch.cuda.is_available()) else "gloo"
+    if backend == "gloo":
+        os.environ.setdefault("MASTER_ADDR", "localhost")
+        os.environ.setdefault("MASTER_PORT", "29500")
+    dist.init_process_group(backend=backend, rank=global_rank, world_size=world_size)
 
     logger.info("Process group initialized")
     device = f"cuda:{local_rank}"
