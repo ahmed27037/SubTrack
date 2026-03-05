@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import platform
 import random
 import time
 
@@ -134,9 +135,12 @@ def evaluate_model(model, preprocess_batched, pad_idx, global_rank, world_size, 
     total_loss = total_loss / total_batches
 
     # Gather losses across all GPUs
-    gathered_losses = [torch.zeros_like(total_loss) for _ in range(world_size)]
-    dist.all_gather(gathered_losses, total_loss)
-    total_loss = sum([t.item() for t in gathered_losses]) / world_size
+    if dist.is_initialized():
+        gathered_losses = [torch.zeros_like(total_loss) for _ in range(world_size)]
+        dist.all_gather(gathered_losses, total_loss)
+        total_loss = sum([t.item() for t in gathered_losses]) / world_size
+    else:
+        total_loss = total_loss.item()
 
     return total_loss, evaluated_on_tokens
 
@@ -154,11 +158,14 @@ def main(args):
 
     logger.info(f"Global rank {global_rank}, local rank {local_rank}, device: {torch.cuda.current_device()}")
 
-    backend = "nccl" if (dist.is_nccl_available() and torch.cuda.is_available()) else "gloo"
-    if backend == "gloo":
-        os.environ.setdefault("MASTER_ADDR", "localhost")
-        os.environ.setdefault("MASTER_PORT", "29500")
-    dist.init_process_group(backend=backend, rank=global_rank, world_size=world_size)
+    if world_size == 1 and platform.system() == "Windows":
+        logger.info("Skipping dist.init_process_group on Windows single-GPU mode")
+    else:
+        backend = "nccl" if (dist.is_nccl_available() and torch.cuda.is_available()) else "gloo"
+        if backend == "gloo":
+            os.environ.setdefault("MASTER_ADDR", "localhost")
+            os.environ.setdefault("MASTER_PORT", "29500")
+        dist.init_process_group(backend=backend, rank=global_rank, world_size=world_size)
 
     logger.info("Process group initialized")
     device = f"cuda:{local_rank}"
